@@ -21,6 +21,24 @@ if ($mysqli->connect_error) {
     die("Connection failed: " . $mysqli->connect_error);
 }
 
+// ============================================================================
+// AUTO-SELECT EQUIPMENT TYPE BASED ON URL PARAMETER
+// ============================================================================
+$selected_type = isset($_GET['type']) ? $_GET['type'] : '';
+$default_equipment_type = '';
+$filter_condition = '';
+$page_title = 'Inventory List';
+
+if ($selected_type == 'semi-expendable') {
+    $default_equipment_type = 'Semi-expendable Equipment';
+    $filter_condition = "WHERE inv.type_equipment = 'Semi-expendable Equipment'";
+    $page_title = 'Semi-expendable Equipment';
+} elseif ($selected_type == 'ppe') {
+    $default_equipment_type = 'Property Plant Equipment (50K Above)';
+    $filter_condition = "WHERE inv.type_equipment = 'Property Plant Equipment (50K Above)'";
+    $page_title = 'Property Plant Equipment (50K Above)';
+}
+
 // Fetch dropdown data for forms
 $dept_res = $mysqli->query("SELECT d.id AS dept_id, d.name AS dept_name, b.name AS building_name, b.floor AS building_floor 
                             FROM departments d 
@@ -38,7 +56,7 @@ $sections_res = $mysqli->query("SELECT s.id, s.name AS sname, d.name AS dname, b
 if(isset($_GET['action']) && $_GET['action'] === 'delete'){
     $id = intval($_GET['id']);
     $mysqli->query("DELETE FROM inventory WHERE id = $id");
-    header('Location: inventory.php');
+    header('Location: inventory.php' . ($selected_type ? '?type=' . $selected_type : ''));
     exit;
 }
 
@@ -159,33 +177,32 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
                     WHERE id=?
                 ");
                 $stmt->bind_param(
-                "ssssddisssiiisdissis",
-                $article_name,
-                $description,
-                $property_no,
-                $uom,
-                $qty_property_card,
-                $qty_physical_count,
-                $location_id,
-                $condition_text,
-                $remarks,
-                $cert_json,
-                $approved_by,
-                $verified_by,
-                $section_id,
-                $fund_cluster,
-                $unit_value,
-                $equipment_id,
-                $type_equipment,
-                $category,
-                $allocate_to,
-                $id
-            );
-                
+                    "ssssddisssiiisdissisi",
+                    $article_name,
+                    $description,
+                    $property_no,
+                    $uom,
+                    $qty_property_card,
+                    $qty_physical_count,
+                    $location_id,
+                    $condition_text,
+                    $remarks,
+                    $cert_json,
+                    $approved_by,
+                    $verified_by,
+                    $section_id,
+                    $fund_cluster,
+                    $unit_value,
+                    $equipment_id,
+                    $type_equipment,
+                    $category,
+                    $allocate_to,
+                    $id
+                );
             }
 
             if($stmt->execute()) {
-                header('Location: inventory.php?success=1');
+                header('Location: inventory.php' . ($selected_type ? '?type=' . $selected_type : '?success=1'));
                 exit;
             } else {
                 throw new Exception('Database error: ' . $stmt->error);
@@ -230,11 +247,11 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
                 $category,
                 $allocate_to,
                 $barcode_data,
-                $barcode_image,
+                $barcode_image
             );
 
             if($stmt->execute()) {
-                header('Location: inventory.php?success=1');
+                header('Location: inventory.php' . ($selected_type ? '?type=' . $selected_type : '?success=1'));
                 exit;
             } else {
                 throw new Exception('Database error: ' . $stmt->error);
@@ -253,7 +270,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     }
 }
 
-// Fetch inventory data for display in table
+// Fetch inventory data for display in table - WITH FILTER
 $inventory_res = $mysqli->query("
     SELECT inv.*, 
            s.name as section_name, 
@@ -276,6 +293,7 @@ $inventory_res = $mysqli->query("
     LEFT JOIN employees e2 ON inv.verified_by = e2.id
     LEFT JOIN employees e3 ON inv.allocate_to = e3.id
     LEFT JOIN equipment eq ON inv.equipment_id = eq.id
+    $filter_condition
     ORDER BY inv.id DESC
 ");
 
@@ -426,13 +444,28 @@ $all_inventory = $mysqli->query("SELECT id, property_no, description FROM invent
     .sync-badge:hover {
         background: #138496;
     }
+    /* Page title badge */
+    .page-title-badge {
+        font-size: 14px;
+        font-weight: normal;
+        margin-left: 10px;
+        padding: 5px 10px;
+    }
 </style>
 
 <!-- MAIN INVENTORY INTERFACE -->
 <div class="container-fluid mt-4">
     <div class="card shadow-lg rounded-4 p-3">
         <div class="card-header bg-primary text-white rounded-4 d-flex justify-content-between align-items-center">
-            <h5 class="mb-0"><i class="fas fa-boxes"></i> Inventory List</h5>
+            <h5 class="mb-0">
+                <i class="fas fa-boxes"></i> <?= $page_title ?>
+                <?php if($selected_type): ?>
+                    <span class="badge bg-light text-dark page-title-badge">
+                        <i class="fas fa-filter"></i> Filtered: <?= $selected_type == 'semi-expendable' ? 'Semi-expendable' : 'PPE' ?>
+                        <a href="inventory.php" class="text-dark ms-2" style="text-decoration: none;">✕</a>
+                    </span>
+                <?php endif; ?>
+            </h5>
             <div>
                 <!-- Action buttons for inventory management -->
                 <button type="button" class="btn btn-light me-2" onclick="printBarcodeLabels()">
@@ -444,8 +477,8 @@ $all_inventory = $mysqli->query("SELECT id, property_no, description FROM invent
                     <i class="fas fa-barcode"></i> Generate Missing Barcodes
                 </button>
                 <!-- Button to add new inventory item -->
-                <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#inventoryModal" onclick="openInventoryModal()">
-                    <i class="fas fa-plus"></i> Add Inventory
+                <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#inventoryModal" onclick="openInventoryModal('', {}, '<?= $default_equipment_type ?>')">
+                    <i class="fas fa-plus"></i> Add <?= $selected_type ? str_replace(' Equipment', '', str_replace(' (50K Above)', '', $default_equipment_type)) : 'Inventory' ?>
                 </button>
                 <?php endif; ?>
             </div>
@@ -456,6 +489,13 @@ $all_inventory = $mysqli->query("SELECT id, property_no, description FROM invent
             <div class="alert alert-success alert-dismissible fade show">
                 Inventory item saved successfully!
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+            
+            <?php if($selected_type && $inventory_res->num_rows == 0): ?>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i> No <?= $selected_type == 'semi-expendable' ? 'Semi-expendable Equipment' : 'Property Plant Equipment (50K Above)' ?> found. 
+                <a href="#" data-bs-toggle="modal" data-bs-target="#inventoryModal" onclick="openInventoryModal('', {}, '<?= $default_equipment_type ?>')">Click here to add one</a>.
             </div>
             <?php endif; ?>
             
@@ -489,83 +529,99 @@ $all_inventory = $mysqli->query("SELECT id, property_no, description FROM invent
                         </tr>
                     </thead>
                     <tbody>
-                        <?php while($r = $inventory_res->fetch_assoc()):
-                            // Format employee names for display
-                            $approved = $r['approved_first'] ? e($r['approved_first'].' '.$r['approved_last']) : '';
-                            $verified = $r['verified_first'] ? e($r['verified_first'].' '.$r['verified_last']) : '';
-                            $allocated = $r['allocate_first'] ? e($r['allocate_first'].' '.$r['allocate_last']) : '';
+                        <?php if($inventory_res->num_rows > 0): ?>
+                            <?php while($r = $inventory_res->fetch_assoc()):
+                                // Format employee names for display
+                                $approved = $r['approved_first'] ? e($r['approved_first'].' '.$r['approved_last']) : '';
+                                $verified = $r['verified_first'] ? e($r['verified_first'].' '.$r['verified_last']) : '';
+                                $allocated = $r['allocate_first'] ? e($r['allocate_first'].' '.$r['allocate_last']) : '';
 
-                            // Parse certified correct JSON and get employee names
-                            $cert = '';
-                            if(!empty($r['certified_correct'])){
-                                $ids = json_decode($r['certified_correct'], true);
-                                if(!empty($ids)){
-                                    $placeholders = implode(',', array_fill(0, count($ids), '?'));
-                                    $types = str_repeat('i', count($ids));
-                                    $stmt = $mysqli->prepare("SELECT firstname, lastname FROM employees WHERE id IN ($placeholders)");
-                                    if($stmt){
-                                        $stmt->bind_param($types, ...$ids);
-                                        $stmt->execute();
-                                        $res = $stmt->get_result();
-                                        $names = [];
-                                        while($row = $res->fetch_assoc()){
-                                            $names[] = $row['firstname'].' '.$row['lastname'];
+                                // Parse certified correct JSON and get employee names
+                                $cert = '';
+                                if(!empty($r['certified_correct'])){
+                                    $ids = json_decode($r['certified_correct'], true);
+                                    if(!empty($ids)){
+                                        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                                        $types = str_repeat('i', count($ids));
+                                        $stmt = $mysqli->prepare("SELECT firstname, lastname FROM employees WHERE id IN ($placeholders)");
+                                        if($stmt){
+                                            $stmt->bind_param($types, ...$ids);
+                                            $stmt->execute();
+                                            $res = $stmt->get_result();
+                                            $names = [];
+                                            while($row = $res->fetch_assoc()){
+                                                $names[] = $row['firstname'].' '.$row['lastname'];
+                                            }
+                                            $cert = implode(', ', $names);
+                                            $stmt->close();
                                         }
-                                        $cert = implode(', ', $names);
-                                        $stmt->close();
                                     }
                                 }
-                            }
-                        ?>
-                        <tr>
-                            <td><?= $r['id'] ?></td>
-                            <td class="barcode-container">
-                                <?php if(!empty($r['barcode_image'])): ?>
-                                    <!-- Display existing barcode with print option -->
-                                    <img src="<?= $r['barcode_image'] ?>" class="barcode-image" alt="Barcode <?= e($r['property_no']) ?>">
-                                    <div class="barcode-text"><?= e($r['property_no']) ?></div>
-                                    <button class="btn btn-sm btn-outline-primary mt-1" onclick="printSingleBarcode('<?= e($r['property_no']) ?>', '<?= e($r['barcode_image']) ?>', '<?= e($r['description']) ?>')">
-                                        <i class="fas fa-print"></i>
+                            ?>
+                            <tr>
+                                <td><?= $r['id'] ?></td>
+                                <td class="barcode-container">
+                                    <?php if(!empty($r['barcode_image'])): ?>
+                                        <!-- Display existing barcode with print option -->
+                                        <img src="<?= $r['barcode_image'] ?>" class="barcode-image" alt="Barcode <?= e($r['property_no']) ?>">
+                                        <div class="barcode-text"><?= e($r['property_no']) ?></div>
+                                        <button class="btn btn-sm btn-outline-primary mt-1" onclick="printSingleBarcode('<?= e($r['property_no']) ?>', '<?= e($r['barcode_image']) ?>', '<?= e($r['description']) ?>')">
+                                            <i class="fas fa-print"></i>
+                                        </button>
+                                    <?php else: ?>
+                                        <!-- Button to generate missing barcode -->
+                                        <button class="btn btn-sm btn-warning" onclick="generateBarcodeForItem(<?= $r['id'] ?>, '<?= e($r['property_no']) ?>')">
+                                            <i class="fas fa-barcode"></i> Generate
+                                        </button>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?= e($r['property_no']) ?></td>
+                                <td><?= e($r['building_name'] . ' (' . ordinal($r['building_floor']) . ' Floor) - ' . $r['department_name']) ?></td>
+                                <td class="wrap-cell"><?= e($r['type_equipment']) ?></td>
+                                <td><?= e($r['equip_name']) ?></td>
+                                <td><?= e($r['equip_category']) ?></td>
+                                <td class="wrap-cell"><?= e($r['description']) ?></td>
+                                <td><?= e($r['qty_property_card']) ?></td>
+                                <td><?= e($r['qty_physical_count']) ?></td>
+                                <td><?= number_format($r['unit_value'], 2) ?></td>
+                                <td><?= e($r['uom']) ?></td>
+                                <td><?= $allocated ?></td>
+                                <td class="wrap-cell"><?= $cert ?></td>
+                                <td><?= $approved ?></td>
+                                <td><?= $verified ?></td>
+                                <td><?= e($r['fund_cluster']) ?></td>
+                                <td><?= e($r['condition_text']) ?></td>
+                                <td class="wrap-cell"><?= e($r['remarks']) ?></td>
+                                <?php if($u['role'] === 'admin'): ?>
+                                <td>
+                                    <!-- Edit button with data attributes for JavaScript -->
+                                    <button 
+                                        class="btn btn-sm btn-primary edit-btn"
+                                        data-id="<?= $r['id'] ?>"
+                                        data-item='<?= htmlspecialchars(json_encode($r, JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES, 'UTF-8') ?>'>
+                                        Edit
                                     </button>
-                                <?php else: ?>
-                                    <!-- Button to generate missing barcode -->
-                                    <button class="btn btn-sm btn-warning" onclick="generateBarcodeForItem(<?= $r['id'] ?>, '<?= e($r['property_no']) ?>')">
-                                        <i class="fas fa-barcode"></i> Generate
-                                    </button>
+                                    <!-- Delete button with confirmation -->
+                                    <a href="inventory.php?action=delete&id=<?= $r['id'] ?><?= $selected_type ? '&type=' . $selected_type : '' ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this item?')">Delete</a>
+                                </td>
                                 <?php endif; ?>
-                            </td>
-                            <td><?= e($r['property_no']) ?></td>
-                            <td><?= e($r['building_name'] . ' (' . ordinal($r['building_floor']) . ' Floor) - ' . $r['department_name']) ?></td>
-                            <td class="wrap-cell"><?= e($r['type_equipment']) ?></td>
-                            <td><?= e($r['equip_name']) ?></td>
-                            <td><?= e($r['equip_category']) ?></td>
-                            <td class="wrap-cell"><?= e($r['description']) ?></td>
-                            <td><?= e($r['qty_property_card']) ?></td>
-                            <td><?= e($r['qty_physical_count']) ?></td>
-                            <td><?= number_format($r['unit_value'], 2) ?></td>
-                            <td><?= e($r['uom']) ?></td>
-                            <td><?= $allocated ?></td>
-                            <td class="wrap-cell"><?= $cert ?></td>
-                            <td><?= $approved ?></td>
-                            <td><?= $verified ?></td>
-                            <td><?= e($r['fund_cluster']) ?></td>
-                            <td><?= e($r['condition_text']) ?></td>
-                            <td class="wrap-cell"><?= e($r['remarks']) ?></td>
-                            <?php if($u['role'] === 'admin'): ?>
-                            <td>
-                                <!-- Edit button with data attributes for JavaScript -->
-                                <button 
-                                    class="btn btn-sm btn-primary edit-btn"
-                                    data-id="<?= $r['id'] ?>"
-                                    data-item='<?= htmlspecialchars(json_encode($r, JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES, 'UTF-8') ?>'>
-                                    Edit
-                                </button>
-                                <!-- Delete button with confirmation -->
-                                <a href="inventory.php?action=delete&id=<?= $r['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this item?')">Delete</a>
-                            </td>
-                            <?php endif; ?>
-                        </tr>
-                        <?php endwhile; ?>
+                            </tr>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="20" class="text-center py-4">
+                                    <div class="text-muted">
+                                        <i class="fas fa-box-open fa-2x mb-2"></i>
+                                        <p>No inventory items found<?= $selected_type ? ' for this equipment type' : '' ?>.</p>
+                                        <?php if($selected_type): ?>
+                                            <a href="#" data-bs-toggle="modal" data-bs-target="#inventoryModal" onclick="openInventoryModal('', {}, '<?= $default_equipment_type ?>')" class="btn btn-primary btn-sm">
+                                                <i class="fas fa-plus"></i> Add <?= $default_equipment_type ?>
+                                            </a>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
@@ -584,7 +640,7 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
   <div class="modal-dialog modal-xl">
     <form method="POST" class="modal-content border-primary shadow-lg rounded-3 p-3">
       <div class="modal-header bg-primary text-white">
-        <h5 class="modal-title" id="inventoryModalLabel">Add/Edit Inventory Item</h5>
+        <h5 class="modal-title" id="inventoryModalLabel">Add Inventory Item</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body row">
@@ -596,14 +652,18 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
               <input type="text" name="article_name" id="invArticleName" class="form-control">
           </div>
 
-          <!-- Type of Equipment -->
+          <!-- Type of Equipment - AUTO SELECTED FROM URL -->
           <div class="col-md-6 mb-2">
             <label class="form-label">Type of Equipment</label>
-            <select name="type_equipment" id="invType" class="form-select">
+            <select name="type_equipment" id="invType" class="form-select" <?= $selected_type ? 'disabled' : '' ?>>
                 <option value="">-- select type --</option>
-                <option value="Semi-expendable Equipment">Semi-expendable Equipment</option>
-                <option value="Property Plant Equipment (50K Above)">Property Plant Equipment (50K Above)</option>
+                <option value="Semi-expendable Equipment" <?= ($default_equipment_type == 'Semi-expendable Equipment') ? 'selected' : '' ?>>Semi-expendable Equipment</option>
+                <option value="Property Plant Equipment (50K Above)" <?= ($default_equipment_type == 'Property Plant Equipment (50K Above)') ? 'selected' : '' ?>>Property Plant Equipment (50K Above)</option>
             </select>
+            <?php if($selected_type): ?>
+                <input type="hidden" name="type_equipment" value="<?= $default_equipment_type ?>">
+                <small class="text-muted">Equipment type is fixed based on your selection</small>
+            <?php endif; ?>
           </div>
 
           <!-- Equipment -->
@@ -622,7 +682,7 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
 
           <!-- Category -->
           <div class="col-md-4 mb-2">
-              <label class="form-label">Category</label>
+              <label class="form-label">Type of PPE</label>
               <input type="text" name="category" id="invCategory" class="form-control">
           </div>
 
@@ -658,7 +718,7 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
               <div class="input-group">
                   <input type="number" step="0.01" name="qty_physical_count" id="invQtyPhy" class="form-control">
                   <button type="button" class="btn btn-outline-info" onclick="openMultipleBarcodeModal()" title="Generate multiple barcodes">
-                      <i class="fas fa-layer-group"> Generate</i>
+                      <i class="fas fa-layer-group"></i> Generate
                   </button>
               </div>
               <div id="qtyHint" class="qty-hint mt-1"></div>
@@ -712,7 +772,7 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
           
           <!-- Allocate To -->
           <div class="col-md-4 mb-2">
-              <label class="form-label">Allocate To</label>
+              <label class="form-label">Accountable By</label>
               <select name="allocate_to" id="invAllocate" class="form-select">
                   <option value="">-- Select --</option>
                   <?php
@@ -790,7 +850,6 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
               <textarea name="remarks" id="invRemarks" class="form-control" rows="2"></textarea>
           </div>
 
-
         <!-- ============================================================================
         PROPERTY NUMBER & BARCODE SECTION
         ============================================================================ -->
@@ -827,9 +886,6 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
                 <button type="button" class="btn btn-sm btn-outline-info" onclick="generateSequential()">
                     <i class="fas fa-sort-numeric-up"></i> Sequential
                 </button>
-                <!-- <button type="button" class="btn btn-sm btn-outline-warning" onclick="extractPrefixFromPropertyNo()">
-                    <i class="fas fa-search"></i> Extract Prefix
-                </button> -->
             </div>
         </div>
         
@@ -840,7 +896,6 @@ MAIN INVENTORY MODAL (Add/Edit Single Item)
                 <p class="text-muted mb-0">Enter Property No to see barcode preview</p>
             </div>
         </div>
-
 
       </div>
       <div class="modal-footer">
@@ -864,7 +919,7 @@ This modal allows generating multiple barcodes at once with batch settings
 <div class="modal fade" id="multipleBarcodeModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <div class="modal-header bg-info text-white">
+            <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title"><i class="fas fa-barcode"></i> Generate Multiple Barcodes</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
@@ -875,9 +930,6 @@ This modal allows generating multiple barcodes at once with batch settings
                         <label class="form-label">Prefix <small class="text-muted">(Sync from Property No)</small></label>
                         <div class="input-group">
                             <input type="text" class="form-control" id="multiPrefix" placeholder="e.g., INV-" value="INV-">
-                            <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncFromPropertyNo()">
-                                <i class="fas fa-sync"></i> Sync
-                            </button> -->
                         </div>
                         <div class="form-text">Current Property No prefix will be auto-detected</div>
                     </div>
@@ -889,9 +941,6 @@ This modal allows generating multiple barcodes at once with batch settings
                         <label class="form-label">Count <small class="text-muted">(Auto-synced from Quantity)</small></label>
                         <div class="input-group">
                             <input type="number" class="form-control" id="multiCount" value="1" min="1" max="100">
-                            <!-- <button type="button" class="btn btn-outline-info" onclick="syncQuantityFromMainForm()">
-                                <i class="fas fa-exchange-alt"></i> Use Qty
-                            </button> -->
                         </div>
                     </div>
                     <div class="col-md-6 mb-3">
@@ -925,9 +974,6 @@ This modal allows generating multiple barcodes at once with batch settings
                             <label class="form-label">Description for All Items</label>
                             <div class="input-group">
                                 <input type="text" class="form-control" id="batchDescription" placeholder="e.g., Desktop Computer">
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncDescriptionFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
                         <div class="col-md-6 mb-2">
@@ -943,23 +989,20 @@ This modal allows generating multiple barcodes at once with batch settings
                                     </option>
                                     <?php endwhile; ?>
                                 </select>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncLocationFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Unit of Measure</label>
                             <div class="input-group">
                                 <select class="form-select" id="batchUOM">
+                                     <option value="">-- select --</option>
                                     <option value="Unit">Unit</option>
+                                    <option value="Lot">Lot</option>
+                                    <option value="Per PC">Per PC</option>
                                     <option value="Set">Set</option>
                                     <option value="Pair">Pair</option>
                                     <option value="Box">Box</option>
                                 </select>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncUOMFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
 
@@ -974,9 +1017,6 @@ This modal allows generating multiple barcodes at once with batch settings
                                     <option value="Under repair">Under repair</option>
                                     <option value="For Disposal">For Disposal</option>
                                 </select>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncConditionFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
 
@@ -992,23 +1032,20 @@ This modal allows generating multiple barcodes at once with batch settings
                                     <option value="TF">TF</option>
                                     <option value="">Donation</option>
                                 </select>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncFundFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
 
-                        <!-- Equipment Type Dropdown -->
+                        <!-- Equipment Type Dropdown - AUTO SELECTED FROM URL -->
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Equipment Type</label>
                             <div class="input-group">
-                                <select class="form-select" id="batchEquipmentType">
-                                    <option value="Semi-expendable Equipment">Semi-expendable Equipment</option>
-                                    <option value="Property Plant Equipment (50K Above)">Property Plant Equipment</option>
+                                <select class="form-select" id="batchEquipmentType" <?= $selected_type ? 'disabled' : '' ?>>
+                                    <option value="Semi-expendable Equipment" <?= ($default_equipment_type == 'Semi-expendable Equipment') ? 'selected' : '' ?>>Semi-expendable Equipment</option>
+                                    <option value="Property Plant Equipment (50K Above)" <?= ($default_equipment_type == 'Property Plant Equipment (50K Above)') ? 'selected' : '' ?>>Property Plant Equipment (50K Above)</option>
                                 </select>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncEquipmentTypeFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
+                                <?php if($selected_type): ?>
+                                    <input type="hidden" id="batchEquipmentTypeHidden" value="<?= $default_equipment_type ?>">
+                                <?php endif; ?>
                             </div>
                         </div>
                         
@@ -1016,9 +1053,6 @@ This modal allows generating multiple barcodes at once with batch settings
                             <label class="form-label">Remarks (Optional)</label>
                             <div class="input-group">
                                 <textarea class="form-control" id="batchRemarks" rows="2" placeholder="Batch generated items"></textarea>
-                                <!-- <button type="button" class="btn btn-outline-secondary" onclick="syncRemarksFromMainForm()">
-                                    <i class="fas fa-sync"></i>
-                                </button> -->
                             </div>
                         </div>
                     </div>
@@ -1133,6 +1167,9 @@ JAVASCRIPT FUNCTIONS
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+// Set default equipment type from URL parameter
+const defaultEquipmentType = '<?= $default_equipment_type ?>';
 
 /**
  * Sets value for form elements
@@ -1257,28 +1294,12 @@ function showQuantityHint() {
     if (hintDiv) hintDiv.remove();
     
     if (quantity > 1) {
-        // // Show hint
-        // const hint = document.createElement('div');
-        // hint.className = 'alert alert-info alert-sm mt-1 p-1';
-        // hint.id = 'qtyHint';
-        // // hint.innerHTML = `
-        // //     <small>
-        // //         <i class="fas fa-info-circle"></i> 
-        // //         <strong>Quantity: ${quantity}</strong> - 
-        // //         Click the <i class="fas fa-layer-group"></i> button to generate ${quantity} individual barcodes
-        // //     </small>
-        // // `;
-        
-        // Insert after the input group
-        const inputGroup = document.getElementById('invQtyPhy').parentElement;
-        if (inputGroup && inputGroup.parentElement) {
-            inputGroup.parentElement.appendChild(hint);
-        }
-        
-        // Highlight quantity field
+        // Remove highlighting
         const qtyField = document.getElementById('invQtyPhy');
-        qtyField.style.borderColor = '#17a2b8';
-        qtyField.style.backgroundColor = '#f8f9fa';
+        if (qtyField) {
+            qtyField.style.borderColor = '';
+            qtyField.style.backgroundColor = '';
+        }
     } else {
         // Remove highlighting
         const qtyField = document.getElementById('invQtyPhy');
@@ -1385,10 +1406,19 @@ function syncFundFromMainForm() {
  * Syncs equipment type from main form
  */
 function syncEquipmentTypeFromMainForm() {
-    const mainEquipmentType = document.getElementById('invType').value;
+    // If type is disabled (filtered), use hidden field or default value
+    const mainEquipmentTypeSelect = document.getElementById('invType');
     const batchEquipmentType = document.getElementById('batchEquipmentType');
-    if (mainEquipmentType && batchEquipmentType) {
-        batchEquipmentType.value = mainEquipmentType;
+    
+    if (batchEquipmentType) {
+        if (mainEquipmentTypeSelect && !mainEquipmentTypeSelect.disabled) {
+            const mainEquipmentType = mainEquipmentTypeSelect.value;
+            if (mainEquipmentType) {
+                batchEquipmentType.value = mainEquipmentType;
+            }
+        } else if (defaultEquipmentType) {
+            batchEquipmentType.value = defaultEquipmentType;
+        }
     }
 }
 
@@ -2027,23 +2057,35 @@ function copyAllBarcodes() {
 /**
  * Saves multiple barcodes to inventory with batch settings
  */
+/**
+ * Saves multiple barcodes to inventory with batch settings
+ */
 async function saveMultipleBarcodes() {
     if (generatedBarcodes.length === 0) {
         alert('No barcodes to save');
         return;
     }
     
-    // Get batch settings
+    // Get batch settings - mirroring your single form submission
     const batchData = {
+        article_name: document.getElementById('batchDescription').value,
         description: document.getElementById('batchDescription').value,
         location_id: document.getElementById('batchLocation').value,
         uom: document.getElementById('batchUOM').value,
         condition_text: document.getElementById('batchCondition').value,
         fund_cluster: document.getElementById('batchFund').value,
-        type_equipment: document.getElementById('batchEquipmentType').value,
+        type_equipment: document.getElementById('batchEquipmentType').value || defaultEquipmentType || 'Semi-expendable Equipment',
         remarks: document.getElementById('batchRemarks').value || 'Batch generated',
-        article_name: document.getElementById('batchDescription').value,
-        category: 'Batch Generated'
+        category: 'Batch Generated',
+        // Set these to empty strings - will become 0 in PHP (like your single insert)
+        approved_by: '',
+        verified_by: '',
+        allocate_to: '',
+        section_id: '',
+        equipment_id: '',
+        unit_value: 0,
+        qty_property_card: 1,
+        qty_physical_count: 1
     };
     
     // Validate required fields
@@ -2066,16 +2108,14 @@ async function saveMultipleBarcodes() {
     previewDiv.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div> Saving to database...</div>';
     
     try {
-        // Prepare items for saving
+        // Prepare items for saving - exactly matching your single insert structure
         const itemsToSave = successBarcodes.map((barcode, index) => ({
             ...batchData,
             property_no: barcode.property_no,
             barcode_image: barcode.barcode_image,
-            description: `${batchData.description} - Unit ${index + 1}`,
-            article_name: `${batchData.article_name} - Unit ${index + 1}`,
-            qty_property_card: 1,
-            qty_physical_count: 1,
-            unit_value: 0
+            // Keep description simple, don't add unit number if not needed
+            article_name: batchData.description,
+            description: batchData.description
         }));
         
         // Send to PHP for saving
@@ -2103,8 +2143,23 @@ async function saveMultipleBarcodes() {
                     </button>
                 </div>
             `;
+            
+            // Clear generated barcodes
+            generatedBarcodes = [];
+            document.getElementById('multiGeneratedList').value = '';
+            
+            // Close modal after 2 seconds
+            setTimeout(() => {
+                const modal = bootstrap.Modal.getInstance(document.getElementById('multipleBarcodeModal'));
+                if (modal) {
+                    modal.hide();
+                }
+            }, 2000);
         } else {
             previewDiv.innerHTML = `<div class="alert alert-danger">Error: ${result.message}</div>`;
+            if (result.errors && result.errors.length > 0) {
+                console.error('Errors:', result.errors);
+            }
         }
         
     } catch (error) {
@@ -2204,14 +2259,23 @@ async function generateSelectedBarcodes() {
  * Populates inventory modal for editing
  * @param {string} id - Item ID
  * @param {object} data - Item data
+ * @param {string} defaultType - Default equipment type from URL
  */
-window.openInventoryModal = function (id = '', data = {}) {
-    setVal('#inventoryModalLabel', id ? 'Edit Item' : 'Add Item');
+window.openInventoryModal = function (id = '', data = {}, defaultType = '') {
+    const isEdit = id ? true : false;
+    setVal('#inventoryModalLabel', isEdit ? 'Edit Item' : 'Add Item');
     setVal('#invId', id || '');
     
     // Populate all form fields
     setVal('#invArticleName', data.article_name || '');
-    setVal('#invType', data.type_equipment || '');
+    
+    // Handle equipment type - use default from URL if adding new and no data
+    if (!isEdit && defaultType && !data.type_equipment) {
+        setVal('#invType', defaultType);
+    } else {
+        setVal('#invType', data.type_equipment || '');
+    }
+    
     setVal('#invPropertyNo', data.property_no || '');
     setVal('#invEquipment', data.equipment_id || '');
     setVal('#invCategory', data.equip_category || data.category || '');
@@ -2305,7 +2369,7 @@ document.addEventListener('DOMContentLoaded', function () {
         btn.addEventListener('click', function() {
             const id = this.dataset.id || '';
             const data = safeParse(this.dataset.item);
-            openInventoryModal(id, data);
+            openInventoryModal(id, data, defaultEquipmentType);
             const modalEl = document.getElementById('inventoryModal');
             if (modalEl) {
                 const modal = new bootstrap.Modal(modalEl);
@@ -2313,7 +2377,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     });
+    
+    // If default type is set from URL, pre-select it in the form when adding new
+    if (defaultEquipmentType) {
+        // This will be used when opening the modal for new items
+        console.log('Default equipment type from URL:', defaultEquipmentType);
+    }
 });
+
 
 // ============================================================================
 // PRINT BARCODE LABELS (Stub function)
