@@ -35,7 +35,7 @@ $errors = [];
 $mysqli->begin_transaction();
 
 try {
-    // Prepare the insert statement - EXACTLY LIKE YOUR SINGLE INSERT
+    // Prepare the insert statement - COUNT THE PLACEHOLDERS: 21 placeholders (?)
     $stmt = $mysqli->prepare("
         INSERT INTO inventory (
             article_name, 
@@ -78,7 +78,7 @@ try {
 
     foreach ($items as $index => $item) {
         // ============================================
-        // SET DEFAULTS - USE NULL INSTEAD OF 0 FOR FOREIGN KEYS
+        // SET DEFAULTS
         // ============================================
         
         // Basic fields
@@ -91,7 +91,7 @@ try {
         $qty_property_card = 1;
         $qty_physical_count = 1;
         
-        // Location - REQUIRED (must be valid)
+        // Location - REQUIRED
         $location_id = isset($item['location_id']) && !empty($item['location_id']) 
                       ? intval($item['location_id']) 
                       : null;
@@ -102,14 +102,31 @@ try {
         // Remarks
         $remarks = trim($item['remarks'] ?? 'Batch generated on ' . date('Y-m-d H:i:s'));
         
-        // Certified correct - always null
+        // ============================================
+        // EMPLOYEE FIELDS - FIXED SECTION
+        // ============================================
+        
+        // Certified correct - JSON encode if array, otherwise null
         $certified_correct = null;
+        if (isset($item['certified_correct']) && !empty($item['certified_correct'])) {
+            if (is_array($item['certified_correct'])) {
+                $certified_correct = json_encode($item['certified_correct']);
+            } else {
+                $certified_correct = $item['certified_correct'];
+            }
+        }
         
-        // Approved/Verified - use NULL instead of 0
-        $approved_by = null;
-        $verified_by = null;
+        // Approved By - use NULL if empty
+        $approved_by = isset($item['approved_by']) && !empty($item['approved_by']) 
+                      ? intval($item['approved_by']) 
+                      : null;
         
-        // Section - use NULL instead of 0 (Fixes the FK constraint)
+        // Verified By - use NULL if empty
+        $verified_by = isset($item['verified_by']) && !empty($item['verified_by']) 
+                      ? intval($item['verified_by']) 
+                      : null;
+        
+        // Section - use NULL if empty or invalid
         $section_id = isset($item['section_id']) && !empty($item['section_id']) 
                      ? intval($item['section_id']) 
                      : null;
@@ -120,7 +137,7 @@ try {
         // Unit value
         $unit_value = floatval($item['unit_value'] ?? 0);
         
-        // Equipment - use NULL instead of 0
+        // Equipment - use NULL if empty
         $equipment_id = isset($item['equipment_id']) && !empty($item['equipment_id']) 
                        ? intval($item['equipment_id']) 
                        : null;
@@ -131,7 +148,7 @@ try {
         // Category
         $category = trim($item['category'] ?? 'Batch Generated');
         
-        // Allocate to - use NULL instead of 0
+        // Allocate to - use NULL if empty
         $allocate_to = isset($item['allocate_to']) && !empty($item['allocate_to']) 
                       ? intval($item['allocate_to']) 
                       : null;
@@ -168,7 +185,7 @@ try {
         $check_stmt->close();
 
         // ============================================
-        // FOREIGN KEY VALIDATION - SET TO NULL IF INVALID
+        // FOREIGN KEY VALIDATION
         // ============================================
         
         // Validate location_id - REQUIRED field
@@ -178,7 +195,6 @@ try {
             $check_loc->execute();
             $loc_result = $check_loc->get_result();
             if ($loc_result->num_rows === 0) {
-                $location_id = null;
                 $fail_count++;
                 $errors[] = "Item " . ($index + 1) . " ({$property_no}): Invalid location ID";
                 $check_loc->close();
@@ -198,7 +214,7 @@ try {
             $check_sec->execute();
             $sec_result = $check_sec->get_result();
             if ($sec_result->num_rows === 0) {
-                $section_id = null; // Set to NULL instead of 0
+                $section_id = null;
             }
             $check_sec->close();
         }
@@ -210,7 +226,7 @@ try {
             $check_eq->execute();
             $eq_result = $check_eq->get_result();
             if ($eq_result->num_rows === 0) {
-                $equipment_id = null; // Set to NULL instead of 0
+                $equipment_id = null;
             }
             $check_eq->close();
         }
@@ -222,38 +238,62 @@ try {
             $check_emp->execute();
             $emp_result = $check_emp->get_result();
             if ($emp_result->num_rows === 0) {
-                $allocate_to = null; // Set to NULL instead of 0
+                $allocate_to = null;
             }
             $check_emp->close();
         }
+        
+        // Validate approved_by - set to NULL if invalid
+        if ($approved_by) {
+            $check_app = $mysqli->prepare("SELECT id FROM employees WHERE id = ?");
+            $check_app->bind_param("i", $approved_by);
+            $check_app->execute();
+            $app_result = $check_app->get_result();
+            if ($app_result->num_rows === 0) {
+                $approved_by = null;
+            }
+            $check_app->close();
+        }
+        
+        // Validate verified_by - set to NULL if invalid
+        if ($verified_by) {
+            $check_ver = $mysqli->prepare("SELECT id FROM employees WHERE id = ?");
+            $check_ver->bind_param("i", $verified_by);
+            $check_ver->execute();
+            $ver_result = $check_ver->get_result();
+            if ($ver_result->num_rows === 0) {
+                $verified_by = null;
+            }
+            $check_ver->close();
+        }
 
         // ============================================
-        // BIND PARAMETERS - MODIFIED FOR NULL VALUES
+        // BIND PARAMETERS - FIXED: 21 PARAMETERS FOR 21 PLACEHOLDERS
         // ============================================
         
         $stmt->bind_param(
             "ssssddisssiiisdississ",
-            $article_name,
-            $description,
-            $property_no,
-            $uom,
-            $qty_property_card,
-            $qty_physical_count,
-            $location_id,
-            $condition_text,
-            $remarks,
-            $certified_correct,
-            $approved_by,
-            $verified_by,
-            $section_id,
-            $fund_cluster,
-            $unit_value,
-            $equipment_id,
-            $type_equipment,
-            $category,
-            $allocate_to,
-            $barcode_data,
-            $barcode_image
+            $article_name,      // 1. article_name (s)
+            $description,       // 2. description (s)
+            $property_no,       // 3. property_no (s)
+            $uom,              // 4. uom (s)
+            $qty_property_card, // 5. qty_property_card (d)
+            $qty_physical_count, // 6. qty_physical_count (d)
+            $location_id,      // 7. location_id (i)
+            $condition_text,   // 8. condition_text (s)
+            $remarks,          // 9. remarks (s)
+            $certified_correct, // 10. certified_correct (s) - JSON string or null
+            $approved_by,      // 11. approved_by (i)
+            $verified_by,      // 12. verified_by (i)
+            $section_id,       // 13. section_id (i)
+            $fund_cluster,     // 14. fund_cluster (s)
+            $unit_value,       // 15. unit_value (d)
+            $equipment_id,     // 16. equipment_id (i)
+            $type_equipment,   // 17. type_equipment (s)
+            $category,         // 18. category (s)
+            $allocate_to,      // 19. allocate_to (i)
+            $barcode_data,     // 20. barcode_data (s)
+            $barcode_image     // 21. barcode_image (s)
         );
 
         if ($stmt->execute()) {

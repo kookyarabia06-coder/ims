@@ -1,0 +1,542 @@
+<!-- Add this after your existing CSS styles and before the main inventory interface -->
+
+<!-- Barcode Scanner Modal -->
+<div class="modal fade" id="barcodeScannerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-camera"></i> Scan Barcode
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Scanner View -->
+                <div class="row">
+                    <div class="col-md-7">
+                        <div class="scanner-container border rounded p-2 bg-dark text-center" style="min-height: 300px;">
+                            <div id="scanner-viewport" style="width: 100%; height: 280px;"></div>
+                            <div id="scanner-status" class="mt-2 text-white">
+                                <span class="spinner-border spinner-border-sm text-light me-2"></span>
+                                Initializing camera...
+                            </div>
+                        </div>
+                        
+                        <div class="scanner-controls mt-3 text-center">
+                            <button class="btn btn-sm btn-primary" onclick="startScanner()">
+                                <i class="fas fa-play"></i> Start Camera
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="stopScanner()">
+                                <i class="fas fa-stop"></i> Stop Camera
+                            </button>
+                            <button class="btn btn-sm btn-secondary" onclick="switchCamera()">
+                                <i class="fas fa-sync-alt"></i> Switch Camera
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Scan Results Panel -->
+                    <div class="col-md-5">
+                        <div class="scan-results-panel border rounded p-3" style="height: 400px; overflow-y: auto;">
+                            <h6 class="border-bottom pb-2">
+                                <i class="fas fa-history"></i> Recent Scans
+                                <span class="badge bg-secondary" id="scanCount">0</span>
+                            </h6>
+                            <div id="scanHistory" class="mb-3">
+                                <p class="text-muted text-center">No scans yet</p>
+                            </div>
+                            
+                            <h6 class="border-bottom pb-2 mt-3">
+                                <i class="fas fa-info-circle"></i> Current Item
+                            </h6>
+                            <div id="currentItemDetails" class="mt-2">
+                                <p class="text-muted text-center">Scan a barcode to view details</p>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <button class="btn btn-sm btn-success w-100" onclick="viewFullDetails()" disabled id="viewDetailsBtn">
+                                    <i class="fas fa-external-link-alt"></i> View Full Details
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Manual Entry -->
+                <div class="mt-3">
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="fas fa-keyboard"></i></span>
+                        <input type="text" class="form-control" id="manualBarcodeInput" placeholder="Or enter barcode manually">
+                        <button class="btn btn-primary" type="button" onclick="lookupBarcode()">
+                            <i class="fas fa-search"></i> Lookup
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" onclick="printScannedBarcode()" disabled id="printScannedBtn">
+                    <i class="fas fa-print"></i> Print Label
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Scanner Button (floating) -->
+<button class="btn btn-success rounded-pill shadow-lg position-fixed bottom-0 end-0 m-4" 
+        style="z-index: 1000; padding: 15px 25px;" 
+        onclick="openScanner()">
+    <i class="fas fa-camera me-2"></i> Scan Barcode
+</button>
+
+<!-- Add QuaggaJS for barcode scanning -->
+<script src="https://cdn.jsdelivr.net/npm/quagga/dist/quagga.min.js"></script>
+
+<script>
+// Barcode Scanner Variables
+let scannerActive = false;
+let currentCamera = 'environment'; // Default to back camera
+let lastScannedCode = '';
+let currentItemData = null;
+let scanHistory = [];
+
+// Initialize scanner when modal opens
+function openScanner() {
+    const modal = new bootstrap.Modal(document.getElementById('barcodeScannerModal'));
+    modal.show();
+    
+    // Start scanner automatically after modal is shown
+    setTimeout(() => {
+        startScanner();
+    }, 500);
+}
+
+// Start barcode scanner
+function startScanner() {
+    if (scannerActive) return;
+    
+    const statusDiv = document.getElementById('scanner-status');
+    statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm text-light me-2"></span> Accessing camera...';
+    
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#scanner-viewport'),
+            constraints: {
+                facingMode: currentCamera,
+                width: 640,
+                height: 480
+            },
+        },
+        decoder: {
+            readers: [
+                "code_128_reader",
+                "ean_reader",
+                "ean_8_reader",
+                "code_39_reader",
+                "code_39_vin_reader",
+                "codabar_reader",
+                "upc_reader",
+                "upc_e_reader",
+                "i2of5_reader"
+            ],
+            debug: {
+                showCanvas: true,
+                showPatches: true,
+                showFoundPatches: true,
+                showSkeleton: true,
+                showLabels: true,
+                patchSize: "medium",
+                showBoxes: true
+            }
+        },
+        locate: true,
+        locator: {
+            halfSample: true,
+            patchSize: "medium",
+            showCanvas: true,
+            showPatches: true,
+            showFoundPatches: true,
+            showSkeleton: true,
+            showLabels: true
+        }
+    }, function(err) {
+        if (err) {
+            console.error(err);
+            statusDiv.innerHTML = '<span class="text-danger">❌ Camera error: ' + err.message + '</span>';
+            return;
+        }
+        
+        Quagga.start();
+        scannerActive = true;
+        statusDiv.innerHTML = '<span class="text-success">✅ Scanner ready - Point camera at barcode</span>';
+        
+        // Add click-to-focus functionality
+        document.querySelector('#scanner-viewport').addEventListener('click', function() {
+            Quagga.start();
+        }, false);
+    });
+
+    // Handle detected barcodes
+    Quagga.onDetected(function(data) {
+        const code = data.codeResult.code;
+        
+        // Avoid duplicate scans of same code
+        if (code !== lastScannedCode) {
+            lastScannedCode = code;
+            
+            // Beep on successful scan
+            beep();
+            
+            // Look up the barcode in database
+            lookupBarcodeByPropertyNo(code);
+        }
+    });
+
+    // Handle processing errors
+    Quagga.onProcessed(function(result) {
+        var drawingCtx = Quagga.canvas.ctx.overlay,
+            drawingCanvas = Quagga.canvas.dom.overlay;
+
+        if (result) {
+            if (result.boxes) {
+                drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
+                result.boxes.filter(function (box) {
+                    return box !== result.box;
+                }).forEach(function (box) {
+                    Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "green", lineWidth: 2});
+                });
+            }
+
+            if (result.box) {
+                Quagga.ImageDebug.drawPath(result.box, {x: 0, y: 1}, drawingCtx, {color: "#00F", lineWidth: 2});
+            }
+
+            if (result.codeResult && result.codeResult.code) {
+                Quagga.ImageDebug.drawPath(result.line, {x: 'x', y: 'y'}, drawingCtx, {color: 'red', lineWidth: 3});
+            }
+        }
+    });
+}
+
+// Stop scanner
+function stopScanner() {
+    if (scannerActive) {
+        Quagga.stop();
+        scannerActive = false;
+        document.getElementById('scanner-status').innerHTML = '<span class="text-warning">⏸️ Scanner stopped</span>';
+    }
+}
+
+// Switch between front/back camera
+function switchCamera() {
+    stopScanner();
+    currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
+    startScanner();
+}
+
+// Simple beep sound
+function beep() {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.1);
+}
+
+// Look up barcode in database
+function lookupBarcodeByPropertyNo(propertyNo) {
+    // Add to scan history
+    addToScanHistory(propertyNo);
+    
+    // Fetch item details via AJAX
+    fetch('get_item_by_barcode.php?barcode=' + encodeURIComponent(propertyNo))
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.item) {
+                displayItemDetails(data.item);
+                currentItemData = data.item;
+                
+                // Enable buttons
+                document.getElementById('viewDetailsBtn').disabled = false;
+                document.getElementById('printScannedBtn').disabled = false;
+            } else {
+                displayItemNotFound(propertyNo);
+                currentItemData = null;
+                
+                // Disable buttons
+                document.getElementById('viewDetailsBtn').disabled = true;
+                document.getElementById('printScannedBtn').disabled = true;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            displayItemNotFound(propertyNo, true);
+        });
+}
+
+// Manual barcode lookup
+function lookupBarcode() {
+    const barcode = document.getElementById('manualBarcodeInput').value.trim();
+    if (barcode) {
+        lookupBarcodeByPropertyNo(barcode);
+    }
+}
+
+// Add scan to history
+function addToScanHistory(code) {
+    const timestamp = new Date().toLocaleTimeString();
+    
+    // Add to array (keep last 10)
+    scanHistory.unshift({
+        code: code,
+        time: timestamp
+    });
+    if (scanHistory.length > 10) scanHistory.pop();
+    
+    // Update display
+    const historyDiv = document.getElementById('scanHistory');
+    const scanCount = document.getElementById('scanCount');
+    
+    scanCount.textContent = scanHistory.length;
+    
+    if (scanHistory.length === 0) {
+        historyDiv.innerHTML = '<p class="text-muted text-center">No scans yet</p>';
+        return;
+    }
+    
+    let html = '';
+    scanHistory.forEach(item => {
+        html += `
+            <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded">
+                <div>
+                    <code>${item.code}</code>
+                </div>
+                <div>
+                    <small class="text-muted">${item.time}</small>
+                    <button class="btn btn-xs btn-outline-primary ms-2" onclick="lookupBarcodeByPropertyNo('${item.code}')">
+                        <i class="fas fa-redo"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    });
+    
+    historyDiv.innerHTML = html;
+}
+
+// Display item details when found
+function displayItemDetails(item) {
+    const detailsDiv = document.getElementById('currentItemDetails');
+    
+    // Format date if available
+    let dateAdded = item.date_added ? new Date(item.date_added).toLocaleDateString() : 'N/A';
+    
+    // Get names from joined data
+    const location = item.building_name ? 
+        `${item.building_name} (${ordinal(item.building_floor)} Floor) - ${item.department_name || ''}` : 
+        'No location';
+    
+    const accountable = item.allocate_first ? 
+        `${item.allocate_first} ${item.allocate_last}` : 
+        'Not assigned';
+    
+    detailsDiv.innerHTML = `
+        <div class="card border-success">
+            <div class="card-header bg-success text-white py-2">
+                <strong>${item.article_name || item.equip_name || 'Item'}</strong>
+            </div>
+            <div class="card-body p-2">
+                <table class="table table-sm table-borderless mb-0">
+                    <tr>
+                        <th width="40%">Property No:</th>
+                        <td><strong>${item.property_no}</strong></td>
+                    </tr>
+                    <tr>
+                        <th>Description:</th>
+                        <td>${item.description || 'N/A'}</td>
+                    </tr>
+                    <tr>
+                        <th>Location:</th>
+                        <td>${location}</td>
+                    </tr>
+                    <tr>
+                        <th>Accountable:</th>
+                        <td>${accountable}</td>
+                    </tr>
+                    <tr>
+                        <th>Condition:</th>
+                        <td>
+                            <span class="badge ${getConditionBadgeClass(item.condition_text)}">
+                                ${item.condition_text || 'N/A'}
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Qty (Physical):</th>
+                        <td>${item.qty_physical_count || 0}</td>
+                    </tr>
+                    <tr>
+                        <th>Unit Value:</th>
+                        <td>₱${parseFloat(item.unit_value || 0).toFixed(2)}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+// Helper function for condition badge
+function getConditionBadgeClass(condition) {
+    const classes = {
+        'Serviceable': 'bg-success',
+        'Non-Serviceable': 'bg-danger',
+        'For Condemn': 'bg-warning text-dark',
+        'Under Repair': 'bg-info',
+        'For Disposal': 'bg-secondary'
+    };
+    return classes[condition] || 'bg-secondary';
+}
+
+// Display when item not found
+function displayItemNotFound(propertyNo, error = false) {
+    const detailsDiv = document.getElementById('currentItemDetails');
+    detailsDiv.innerHTML = `
+        <div class="alert alert-warning mb-0">
+            <i class="fas fa-exclamation-triangle"></i>
+            No item found with property number: <strong>${propertyNo}</strong>
+        </div>
+    `;
+}
+
+// View full item details in edit modal
+function viewFullDetails() {
+    if (!currentItemData) return;
+    
+    // Close scanner modal
+    bootstrap.Modal.getInstance(document.getElementById('barcodeScannerModal')).hide();
+    
+    // Open inventory modal with item data
+    openInventoryModal(currentItemData.id, currentItemData, defaultEquipmentType);
+    const modal = new bootstrap.Modal(document.getElementById('inventoryModal'));
+    modal.show();
+}
+
+// Print scanned item barcode
+function printScannedBarcode() {
+    if (!currentItemData || !currentItemData.barcode_image) {
+        alert('No barcode available for this item');
+        return;
+    }
+    
+    printSingleBarcode(
+        currentItemData.property_no,
+        currentItemData.barcode_image,
+        currentItemData.description || currentItemData.article_name || ''
+    );
+}
+
+// Helper function for ordinal numbers (copied from PHP)
+function ordinal(number) {
+    const ends = ['th','st','nd','rd','th','th','th','th','th','th'];
+    if ((number % 100) >= 11 && (number % 100) <= 13) return number + 'th';
+    return number + ends[number % 10];
+}
+
+// Clean up on modal close
+document.getElementById('barcodeScannerModal').addEventListener('hidden.bs.modal', function () {
+    stopScanner();
+    lastScannedCode = '';
+    currentItemData = null;
+    document.getElementById('viewDetailsBtn').disabled = true;
+    document.getElementById('printScannedBtn').disabled = true;
+    document.getElementById('manualBarcodeInput').value = '';
+});
+
+// Add keyboard shortcut (Ctrl+Shift+S) to open scanner
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        openScanner();
+    }
+});
+</script>
+
+<!-- Add CSS for scanner -->
+<style>
+    #scanner-viewport {
+        position: relative;
+        overflow: hidden;
+        background: #000;
+    }
+    
+    #scanner-viewport video, 
+    #scanner-viewport canvas {
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    
+    #scanner-viewport canvas {
+        z-index: 10;
+    }
+    
+    .scanner-container {
+        position: relative;
+        background: #000;
+    }
+    
+    #scanner-status {
+        position: relative;
+        z-index: 20;
+        background: rgba(0,0,0,0.7);
+        padding: 5px 10px;
+        border-radius: 20px;
+        display: inline-block;
+    }
+    
+    .btn-xs {
+        padding: 2px 6px;
+        font-size: 11px;
+    }
+    
+    .scan-results-panel {
+        background: #f8f9fa;
+    }
+    
+    /* Floating scanner button animation */
+    .position-fixed.btn {
+        animation: pulse 2s infinite;
+        transition: all 0.3s;
+    }
+    
+    .position-fixed.btn:hover {
+        transform: scale(1.1);
+        animation: none;
+    }
+    
+    @keyframes pulse {
+        0% {
+            box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+        }
+        70% {
+            box-shadow: 0 0 0 15px rgba(40, 167, 69, 0);
+        }
+        100% {
+            box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+        }
+    }
+</style>
+
+ADD THE USB SCANNER

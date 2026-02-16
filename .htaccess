@@ -1,0 +1,11 @@
+# .htaccess file
+RewriteEngine On
+
+# Redirect barcode scans to scan page
+RewriteCond %{QUERY_STRING} (^|&)code=([^&]+) [OR]
+RewriteCond %{QUERY_STRING} (^|&)barcode=([^&]+) [OR]
+RewriteCond %{QUERY_STRING} (^|&)id=([^&]+)
+RewriteRule ^$ scan.php [L,QSA]
+
+# Make pretty URLs for barcodes
+RewriteRule ^barcode/([^/]+)$ scan.php?code=$1 [L,QSA]
