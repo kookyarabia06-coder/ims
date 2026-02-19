@@ -469,7 +469,6 @@ $employees_for_batch = $mysqli->query("SELECT id, firstname, lastname FROM emplo
         border-left: 4px solid #007bff;
     }
 </style>
-<!-- Add this after your existing CSS styles and before the main inventory interface -->
 
 <!-- Enhanced Barcode Scanner Modal (Camera + USB Scanner) -->
 <div class="modal fade" id="barcodeScannerModal" tabindex="-1" aria-hidden="true">
@@ -696,11 +695,11 @@ $employees_for_batch = $mysqli->query("SELECT id, firstname, lastname FROM emplo
 </div>
 
 <!-- Quick Scanner Button (floating) -->
-<button class="btn btn-success rounded-pill shadow-lg position-fixed bottom-0 end-0 m-4" 
+<!-- <button class="btn btn-success rounded-pill shadow-lg position-fixed bottom-0 end-0 m-4" 
         style="z-index: 1000; padding: 15px 25px;" 
         onclick="openScanner()">
     <i class="fas fa-camera me-2"></i> Scan Barcode
-</button>
+</button> -->
 
 <!-- Add QuaggaJS for barcode scanning -->
 <script src="https://cdn.jsdelivr.net/npm/quagga/dist/quagga.min.js"></script>
@@ -712,29 +711,198 @@ let currentCamera = 'environment'; // Default to back camera
 let lastScannedCode = '';
 let currentItemData = null;
 let scanHistory = [];
+let scannerInitialized = false;
+let scanningPaused = false;
 
 // USB Scanner Variables
 let usbScannerBuffer = '';
 let usbScannerTimeout = null;
 const SCANNER_DELAY = 50; // Milliseconds to wait for complete scan
 
+// Check if device is mobile
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
 // Initialize scanner when modal opens
 function openScanner() {
     const modal = new bootstrap.Modal(document.getElementById('barcodeScannerModal'));
     modal.show();
     
+    // Reset scanner state
+    scanningPaused = false;
+    lastScannedCode = '';
+    
     // Start scanner automatically after modal is shown
     setTimeout(() => {
-        startScanner();
+        // For mobile, use direct camera access
+        if (isMobileDevice()) {
+            startMobileCamera();
+        } else {
+            startScanner();
+        }
     }, 500);
 }
 
-// Start barcode scanner
+// Mobile-optimized camera start (works better with Google Camera)
+function startMobileCamera() {
+    if (scannerActive) return;
+    
+    const statusDiv = document.getElementById('scanner-status');
+    const viewport = document.querySelector('#scanner-viewport');
+    
+    statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm text-light me-2"></span> Accessing camera...';
+    
+    // Clear any existing content
+    viewport.innerHTML = '';
+    
+    // Create video element
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('autoplay', '');
+    video.setAttribute('muted', '');
+    video.style.width = '100%';
+    video.style.height = '100%';
+    video.style.objectFit = 'cover';
+    viewport.appendChild(video);
+    
+    // Create canvas for scanning (hidden)
+    const canvas = document.createElement('canvas');
+    canvas.style.display = 'none';
+    viewport.appendChild(canvas);
+    
+    // Access camera
+    const constraints = {
+        video: {
+            facingMode: currentCamera,
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+        }
+    };
+    
+    navigator.mediaDevices.getUserMedia(constraints)
+        .then(function(stream) {
+            video.srcObject = stream;
+            video.play();
+            scannerActive = true;
+            scannerInitialized = true;
+            
+            statusDiv.innerHTML = '<span class="text-success">✅ Camera ready - Point at barcode</span>';
+            
+            // Start scanning loop
+            requestAnimationFrame(scanFrame);
+        })
+        .catch(function(err) {
+            console.error('Camera error:', err);
+            statusDiv.innerHTML = `<span class="text-danger">❌ Camera error: ${err.message}</span>`;
+            
+            // Fallback to Quagga
+            setTimeout(() => {
+                statusDiv.innerHTML = '<span class="text-warning">Trying alternative scanner...</span>';
+                startScanner();
+            }, 2000);
+        });
+}
+
+// Scan frames from video
+function scanFrame() {
+    if (!scannerActive || scanningPaused) {
+        return;
+    }
+    
+    const video = document.querySelector('#scanner-viewport video');
+    const canvas = document.querySelector('#scanner-viewport canvas');
+    
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+        requestAnimationFrame(scanFrame);
+        return;
+    }
+    
+    // Set canvas dimensions
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Draw video frame to canvas
+    const context = canvas.getContext('2d');
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Get image data for barcode detection
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Use BarcodeDetector API if available (modern browsers)
+    if ('BarcodeDetector' in window) {
+        detectBarcodeModern(imageData, canvas.width, canvas.height);
+    } else {
+        // Fallback: use simpler detection or continue scanning
+        // For simplicity, we'll just continue the loop
+        // You can implement a simpler detection algorithm here
+        setTimeout(() => {
+            requestAnimationFrame(scanFrame);
+        }, 100);
+    }
+}
+
+// Modern barcode detection (works on Chrome for Android)
+async function detectBarcodeModern(imageData, width, height) {
+    try {
+        const barcodeDetector = new BarcodeDetector({
+            formats: ['code_128', 'ean_13', 'ean_8', 'code_39', 'codabar', 'upc_a', 'upc_e']
+        });
+        
+        // Create ImageBitmap from canvas
+        const canvas = document.querySelector('#scanner-viewport canvas');
+        const bitmap = await createImageBitmap(canvas);
+        
+        const barcodes = await barcodeDetector.detect(bitmap);
+        
+        if (barcodes.length > 0 && !scanningPaused) {
+            const code = barcodes[0].rawValue;
+            
+            // Avoid duplicate scans
+            if (code !== lastScannedCode) {
+                lastScannedCode = code;
+                
+                // Beep on successful scan
+                beep();
+                
+                // Pause scanning briefly to prevent multiple scans
+                scanningPaused = true;
+                
+                // Look up the barcode
+                lookupBarcodeByPropertyNo(code);
+                
+                // Resume scanning after delay
+                setTimeout(() => {
+                    scanningPaused = false;
+                    lastScannedCode = ''; // Allow same barcode after delay
+                    requestAnimationFrame(scanFrame);
+                }, 2000);
+            }
+        }
+        
+        // Continue scanning if not paused
+        if (!scanningPaused) {
+            requestAnimationFrame(scanFrame);
+        }
+    } catch (error) {
+        console.error('Barcode detection error:', error);
+        // Continue scanning
+        requestAnimationFrame(scanFrame);
+    }
+}
+
+// Original Quagga scanner (fallback)
 function startScanner() {
     if (scannerActive) return;
     
     const statusDiv = document.getElementById('scanner-status');
     statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm text-light me-2"></span> Accessing camera...';
+    
+    // Check if Quagga is available
+    if (typeof Quagga === 'undefined') {
+        statusDiv.innerHTML = '<span class="text-danger">❌ Scanner library not loaded</span>';
+        return;
+    }
     
     Quagga.init({
         inputStream: {
@@ -758,42 +926,29 @@ function startScanner() {
                 "upc_reader",
                 "upc_e_reader",
                 "i2of5_reader"
-            ],
-            debug: {
-                showCanvas: true,
-                showPatches: true,
-                showFoundPatches: true,
-                showSkeleton: true,
-                showLabels: true,
-                patchSize: "medium",
-                showBoxes: true
-            }
+            ]
         },
         locate: true,
         locator: {
             halfSample: true,
-            patchSize: "medium",
-            showCanvas: true,
-            showPatches: true,
-            showFoundPatches: true,
-            showSkeleton: true,
-            showLabels: true
+            patchSize: "medium"
         }
     }, function(err) {
         if (err) {
             console.error(err);
             statusDiv.innerHTML = '<span class="text-danger">❌ Camera error: ' + err.message + '</span>';
+            
+            // Try mobile fallback
+            if (isMobileDevice()) {
+                statusDiv.innerHTML = '<span class="text-warning">Trying mobile camera...</span>';
+                setTimeout(() => startMobileCamera(), 1000);
+            }
             return;
         }
         
         Quagga.start();
         scannerActive = true;
         statusDiv.innerHTML = '<span class="text-success">✅ Scanner ready - Point camera at barcode</span>';
-        
-        // Add click-to-focus functionality
-        document.querySelector('#scanner-viewport').addEventListener('click', function() {
-            Quagga.start();
-        }, false);
     });
 
     // Handle detected barcodes
@@ -811,38 +966,25 @@ function startScanner() {
             lookupBarcodeByPropertyNo(code);
         }
     });
-
-    // Handle processing errors
-    Quagga.onProcessed(function(result) {
-        var drawingCtx = Quagga.canvas.ctx.overlay,
-            drawingCanvas = Quagga.canvas.dom.overlay;
-
-        if (result) {
-            if (result.boxes) {
-                drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
-                result.boxes.filter(function (box) {
-                    return box !== result.box;
-                }).forEach(function (box) {
-                    Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "green", lineWidth: 2});
-                });
-            }
-
-            if (result.box) {
-                Quagga.ImageDebug.drawPath(result.box, {x: 0, y: 1}, drawingCtx, {color: "#00F", lineWidth: 2});
-            }
-
-            if (result.codeResult && result.codeResult.code) {
-                Quagga.ImageDebug.drawPath(result.line, {x: 'x', y: 'y'}, drawingCtx, {color: 'red', lineWidth: 3});
-            }
-        }
-    });
 }
 
 // Stop scanner
 function stopScanner() {
     if (scannerActive) {
-        Quagga.stop();
+        if (typeof Quagga !== 'undefined') {
+            Quagga.stop();
+        }
+        
+        // Stop video stream if using mobile camera
+        const video = document.querySelector('#scanner-viewport video');
+        if (video && video.srcObject) {
+            const tracks = video.srcObject.getTracks();
+            tracks.forEach(track => track.stop());
+            video.srcObject = null;
+        }
+        
         scannerActive = false;
+        scannerInitialized = false;
         document.getElementById('scanner-status').innerHTML = '<span class="text-warning">⏸️ Scanner stopped</span>';
     }
 }
@@ -851,23 +993,39 @@ function stopScanner() {
 function switchCamera() {
     stopScanner();
     currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
-    startScanner();
+    
+    setTimeout(() => {
+        if (isMobileDevice()) {
+            startMobileCamera();
+        } else {
+            startScanner();
+        }
+    }, 500);
 }
 
 // Simple beep sound
 function beep() {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    
-    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
-    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-    
-    oscillator.start();
-    oscillator.stop(audioCtx.currentTime + 0.1);
+    try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.1);
+        
+        // Resume audio context if suspended (mobile browsers)
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    } catch (e) {
+        console.log('Beep not supported');
+    }
 }
 
 // Look up barcode in database
@@ -886,6 +1044,9 @@ function lookupBarcodeByPropertyNo(propertyNo) {
                 // Enable buttons
                 document.getElementById('viewDetailsBtn').disabled = false;
                 document.getElementById('printScannedBtn').disabled = false;
+                
+                // Show success animation
+                showScanSuccess(propertyNo);
             } else {
                 displayItemNotFound(propertyNo);
                 currentItemData = null;
@@ -893,12 +1054,44 @@ function lookupBarcodeByPropertyNo(propertyNo) {
                 // Disable buttons
                 document.getElementById('viewDetailsBtn').disabled = true;
                 document.getElementById('printScannedBtn').disabled = true;
+                
+                // Show error animation
+                showScanError(propertyNo);
             }
         })
         .catch(error => {
             console.error('Error:', error);
             displayItemNotFound(propertyNo, true);
+            showScanError(propertyNo);
         });
+}
+
+// Show scan success animation
+function showScanSuccess(propertyNo) {
+    const statusDiv = document.getElementById('scanner-status');
+    statusDiv.innerHTML = `<span class="text-success">✅ Found: ${propertyNo}</span>`;
+    
+    // Flash green
+    const viewport = document.querySelector('#scanner-viewport');
+    viewport.style.transition = 'background-color 0.3s';
+    viewport.style.backgroundColor = 'rgba(0, 255, 0, 0.2)';
+    setTimeout(() => {
+        viewport.style.backgroundColor = '';
+    }, 300);
+}
+
+// Show scan error animation
+function showScanError(propertyNo) {
+    const statusDiv = document.getElementById('scanner-status');
+    statusDiv.innerHTML = `<span class="text-danger">❌ Not found: ${propertyNo}</span>`;
+    
+    // Flash red
+    const viewport = document.querySelector('#scanner-viewport');
+    viewport.style.transition = 'background-color 0.3s';
+    viewport.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+    setTimeout(() => {
+        viewport.style.backgroundColor = '';
+    }, 300);
 }
 
 // Manual barcode lookup (for manual tab)
@@ -909,11 +1102,6 @@ function lookupManualBarcode() {
         addToRecentManual(barcode);
         document.getElementById('manualBarcodeInput').value = '';
     }
-}
-
-// Keep original lookup function for backward compatibility
-function lookupBarcode() {
-    lookupManualBarcode();
 }
 
 // Add scan to history
@@ -1243,12 +1431,19 @@ document.getElementById('barcodeScannerModal').addEventListener('hidden.bs.modal
     stopScanner();
     lastScannedCode = '';
     currentItemData = null;
+    scanningPaused = false;
     document.getElementById('viewDetailsBtn').disabled = true;
     document.getElementById('printScannedBtn').disabled = true;
     document.getElementById('manualBarcodeInput').value = '';
     document.getElementById('usbScannerInput').value = '';
     document.getElementById('lastScannedBarcode').textContent = '-';
     document.getElementById('lastScanTime').textContent = '';
+    
+    // Clear viewport
+    const viewport = document.querySelector('#scanner-viewport');
+    if (viewport) {
+        viewport.innerHTML = '';
+    }
 });
 
 // Add keyboard shortcut (Ctrl+Shift+S) to open scanner
@@ -1273,130 +1468,65 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update mode when switching tabs
     document.getElementById('camera-tab')?.addEventListener('shown.bs.tab', function() {
         updateCurrentMode('Camera Mode');
+        if (isMobileDevice()) {
+            startMobileCamera();
+        } else {
+            startScanner();
+        }
     });
     
     document.getElementById('manual-tab')?.addEventListener('shown.bs.tab', function() {
         updateCurrentMode('Manual Entry');
         document.getElementById('manualBarcodeInput').focus();
     });
+    
+    document.getElementById('usb-tab')?.addEventListener('shown.bs.tab', function() {
+        updateCurrentMode('USB Scanner Mode');
+        stopScanner();
+    });
 });
-</script>
 
-<!-- Add CSS for scanner and USB mode -->
-<style>
+// Add CSS for better mobile camera view
+const style = document.createElement('style');
+style.textContent = `
     #scanner-viewport {
         position: relative;
         overflow: hidden;
         background: #000;
+        min-height: 300px;
     }
     
-    #scanner-viewport video, 
+    #scanner-viewport video,
     #scanner-viewport canvas {
         width: 100%;
         height: 100%;
+        object-fit: cover;
+    }
+    
+    #scanner-viewport canvas.drawingBuffer {
         position: absolute;
         top: 0;
         left: 0;
     }
     
-    #scanner-viewport canvas {
-        z-index: 10;
-    }
-    
-    .scanner-container {
-        position: relative;
-        background: #000;
-    }
-    
-    #scanner-status {
-        position: relative;
-        z-index: 20;
-        background: rgba(0,0,0,0.7);
-        padding: 5px 10px;
-        border-radius: 20px;
-        display: inline-block;
-    }
-    
-    .btn-xs {
-        padding: 2px 6px;
-        font-size: 11px;
-    }
-    
-    .scan-results-panel {
-        background: #f8f9fa;
-    }
-    
-    /* USB Scanner input styling */
-    #usbScannerInput:focus {
-        border-color: #28a745;
-        box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
-        background-color: #f8fff8;
-    }
-    
-    #lastScannedBarcode {
-        font-family: monospace;
-        font-size: 24px;
-        letter-spacing: 1px;
-    }
-    
-    .nav-tabs .nav-link {
-        font-size: 14px;
-        padding: 10px 15px;
-    }
-    
-    .nav-tabs .nav-link i {
-        font-size: 16px;
-    }
-    
-    .list-group-item {
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .list-group-item:hover {
-        background-color: #e8f0fe;
-        transform: translateX(5px);
-    }
-    
-    #currentMode {
-        font-size: 12px;
-        padding: 5px 10px;
-    }
-    
-    /* Floating scanner button animation */
-    .position-fixed.btn {
-        animation: pulse 2s infinite;
-        transition: all 0.3s;
-    }
-    
-    .position-fixed.btn:hover {
-        transform: scale(1.1);
-        animation: none;
-    }
-    
-    @keyframes pulse {
-        0% {
-            box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
-        }
-        70% {
-            box-shadow: 0 0 0 15px rgba(40, 167, 69, 0);
-        }
-        100% {
-            box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
-        }
-    }
-
+    /* Mobile optimizations */
     @media (max-width: 768px) {
-        .nav-tabs .nav-link {
-            font-size: 12px;
-            padding: 8px 10px;
+        #scanner-viewport {
+            min-height: 280px;
         }
         
-        .nav-tabs .nav-link i {
-            margin-right: 5px;
+        .scanner-controls .btn {
+            font-size: 12px;
+            padding: 6px 10px;
+        }
+        
+        #scanner-status {
+            font-size: 12px;
         }
     }
-</style>
+`;
+document.head.appendChild(style);
+</script>
 <!-- MAIN INVENTORY INTERFACE -->
 <div class="container-fluid mt-4">
     <div class="card shadow-lg rounded-4 p-3">

@@ -1,24 +1,21 @@
- <?php
+<?php
 require_once 'auth.php';
-header('Content-Type: application/json');
+require_login();
 
-// Database connection
 $mysqli = new mysqli('localhost', 'root', '', 'inventory_db');
 if ($mysqli->connect_error) {
-    echo json_encode(['success' => false, 'message' => 'Database connection failed']);
-    exit;
+    die(json_encode(['success' => false, 'message' => 'Database connection failed']));
 }
 
-// Get barcode from request
-$barcode = isset($_GET['barcode']) ? trim($_GET['barcode']) : '';
+$barcode = $_GET['barcode'] ?? '';
 
 if (empty($barcode)) {
     echo json_encode(['success' => false, 'message' => 'No barcode provided']);
     exit;
 }
 
-// Query to get item details with all related information
-$query = "
+// Search for item by property_no
+$stmt = $mysqli->prepare("
     SELECT inv.*, 
            s.name as section_name, 
            d.name as department_name, 
@@ -40,16 +37,16 @@ $query = "
     LEFT JOIN employees e2 ON inv.verified_by = e2.id
     LEFT JOIN employees e3 ON inv.allocate_to = e3.id
     LEFT JOIN equipment eq ON inv.equipment_id = eq.id
-    WHERE inv.property_no = ? OR inv.barcode_data = ?
-";
+    WHERE inv.property_no = ?
+    LIMIT 1
+");
 
-$stmt = $mysqli->prepare($query);
-$stmt->bind_param("ss", $barcode, $barcode);
+$stmt->bind_param('s', $barcode);
 $stmt->execute();
 $result = $stmt->get_result();
 
 if ($result->num_rows > 0) {
-    $item = $result->fetch_assoc(); 
+    $item = $result->fetch_assoc();
     echo json_encode(['success' => true, 'item' => $item]);
 } else {
     echo json_encode(['success' => false, 'message' => 'Item not found']);
